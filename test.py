@@ -1,4 +1,11 @@
 import wiringpi2 as wiringpi
-io = wiringpi.GPIO(wiringpi.GPIO.WPI_MODE_PINS)
-print io.digitalRead(1)
-print io.analogRead(1)
+from time import sleep
+
+WIRINGPI_DEBUG = 1
+
+wiringpi.wiringPiSetupGpio()
+
+wiringpi.pinMode(0,1)
+wiringpi.digitalWrite(0,0)
+sleep(1)
+wiringpi.digitalWrite(0,1)
