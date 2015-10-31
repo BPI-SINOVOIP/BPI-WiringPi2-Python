@@ -15,7 +15,7 @@ If you manually rebuild the bindings with swig -python wiringpi.i
 
 **YOU MUST FIRST INSTALL BPI-WiringPi!!**
 ```bash
-git clone https://github.com/BPI-SINOVOIP/BPI-WiringPi.git -b  BPI-M2
+git clone https://github.com/BPI-SINOVOIP/BPI-WiringPi.git -b BPI-M2
 cd BPI-WiringPi
 chmod +x ./build
 sudo ./build
@@ -23,7 +23,7 @@ sudo ./build
 
 **Get/setup repo:**
 ```bash
-git clone https://github.com/BPI-SINOVOIP/BPI-WiringPi2-Python.git -b  BPI-M2
+git clone https://github.com/BPI-SINOVOIP/BPI-WiringPi2-Python.git -b BPI-M2
 cd BPI-WiringPi2-Python
 ```
 
