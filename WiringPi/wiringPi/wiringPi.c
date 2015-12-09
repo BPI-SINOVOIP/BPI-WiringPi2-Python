@@ -131,7 +131,7 @@ struct wiringPiNodeStruct *wiringPiNodes = NULL ;
 //	Taken from Gert/Doms code. Some of this is not in the manual
 //	that I can find )-:
 
-static volatile unsigned int	 BCM2708_PERI_BASE = 0x20000000 ;	// Variable for Pi2
+#define BCM2708_PERI_BASE	                     0x20000000
 #define GPIO_PADS		(BCM2708_PERI_BASE + 0x00100000)
 #define CLOCK_BASE		(BCM2708_PERI_BASE + 0x00101000)
 #define GPIO_BASE		(BCM2708_PERI_BASE + 0x00200000)
@@ -187,6 +187,9 @@ static volatile unsigned int	 BCM2708_PERI_BASE = 0x20000000 ;	// Variable for P
 
 // Locals to hold pointers to the hardware
 
+//for M2 PL and PM group gpios
+static volatile uint32_t *gpio_lm;
+
 static volatile uint32_t *gpio ;
 static volatile uint32_t *pwm ;
 static volatile uint32_t *clk ;
@@ -205,7 +208,7 @@ static volatile uint32_t *timerIrqRaw ;
 
 static int piModel2 = FALSE ;
 
-const char *piModelNames [7] =
+const char *piModelNames [8] =
 {
   "Unknown",
   "Model A",
@@ -214,6 +217,7 @@ const char *piModelNames [7] =
   "Compute Module",
   "Model A+",
   "Model 2",	// Quad Core
+  "Model BM",
 } ;
 
 const char *piRevisionNames [5] =
@@ -225,13 +229,14 @@ const char *piRevisionNames [5] =
   "2",
 } ;
 
-const char *piMakerNames [5] =
+const char *piMakerNames [6] =
 {
   "Unknown",
   "Egoman",
   "Sony",
   "Qusda",
   "MBest",
+  "BPI",
 } ;
 
 
@@ -572,26 +577,28 @@ static uint8_t gpioToClkDiv [] =
 // Add for Banana Pi
 /* for mmap bananapi */
 #define	MAX_PIN_NUM		(0x40)  //64
+//sunxi_gpio
 #define SUNXI_GPIO_BASE (0x01C20800)
+#define SUNXI_GPIO_LM_BASE    (0x01f02c00)
 #define MAP_SIZE	(4096*2)
 #define MAP_MASK	(MAP_SIZE - 1)
-//sunxi_pwm
-#define SUNXI_PWM_BASE (0x01c20e00)
-#define SUNXI_PWM_CTRL_REG  (SUNXI_PWM_BASE)
-#define SUNXI_PWM_CH0_PERIOD  (SUNXI_PWM_BASE + 0x4)
-#define SUNXI_PWM_CH1_PERIOD  (SUNXI_PWM_BASE + 0x8)
+//sunxi_pwm, only use ch1 and ch2
+#define SUNXI_PWM_BASE        (0x01c21400)
+//#define SUNXI_PWM_CH0_CTRL    (SUNXI_PWM_BASE)
+//#define SUNXI_PWM_CH0_PERIOD  (SUNXI_PWM_BASE + 0x04)
+#define SUNXI_PWM_CH1_CTRL    (SUNXI_PWM_BASE + 0X10)
+#define SUNXI_PWM_CH1_PERIOD  (SUNXI_PWM_BASE + 0x14)
+#define SUNXI_PWM_CH2_CTRL    (SUNXI_PWM_BASE + 0X20)
+#define SUNXI_PWM_CH2_PERIOD  (SUNXI_PWM_BASE + 0x24)
+//#define SUNXI_PWM_CH3_CTRL    (SUNXI_PWM_BASE + 0X30)
+//#define SUNXI_PWM_CH3_PERIOD  (SUNXI_PWM_BASE + 0x34)
 
-#define SUNXI_PWM_CH0_EN			(1 << 4)
-#define SUNXI_PWM_CH0_ACT_STA		(1 << 5)
-#define SUNXI_PWM_SCLK_CH0_GATING	(1 << 6)
-#define SUNXI_PWM_CH0_MS_MODE		(1 << 7) //pulse mode
-#define SUNXI_PWM_CH0_PUL_START		(1 << 8)
-
-#define SUNXI_PWM_CH1_EN			(1 << 19)
-#define SUNXI_PWM_CH1_ACT_STA		(1 << 20)
-#define SUNXI_PWM_SCLK_CH1_GATING	(1 << 21)
-#define SUNXI_PWM_CH1_MS_MODE		(1 << 22) //pulse mode
-#define SUNXI_PWM_CH1_PUL_START		(1 << 23)
+//each channel use the same offset bit
+#define SUNXI_PWM_CH_EN			    (1 << 4)
+#define SUNXI_PWM_CH_ACT_STA		(1 << 5)
+#define SUNXI_PWM_SCLK_CH_GATING	(1 << 6)
+#define SUNXI_PWM_CH_MS_MODE		(1 << 7) //pulse mode
+#define SUNXI_PWM_CH_PUL_START		(1 << 8)
 
 
 #define PWM_CLK_DIV_120 	        0
@@ -611,6 +618,7 @@ static uint8_t gpioToClkDiv [] =
 //	#define GPIO_BASE_BP		(SUNXI_GPIO_BASE)
 #define GPIO_BASE_BP		(0x01C20000)
 #define GPIO_TIMER_BP		(0x0000B000)
+#define GPIO_BASE_LM_BP		(0x01f02000)  
 #define GPIO_PWM_BP		(0x01c20000)  //need 4k*n
 
 static int wiringPinMode = WPI_MODE_UNINITIALISED ;
@@ -620,71 +628,73 @@ static int wiringPinMode = WPI_MODE_UNINITIALISED ;
 */
 static int pinToGpio_BP [64] =
 {
-  275,226,
-  274,273,
-  244,245,
-  272,259,
-  53,52,
-  266,270,
-  268,269,
-  267,224,
-  225,-1, //end in 16
-	-1,-1,
-	-1,37,
-	38,39,
-	40,35,
-	44,277,
-	270,45,
-	257,256,
+  199, 234,        //0, 1
+  198, 201,        //2, 3
+  235, 236,        //4, 5
+  200, 233,        //6, 7
+  243, 242,        //8, 9
+  205, 204,        //10, 11
+  207, 208,        //12, 13
+  206, 132,        //14, 15
+  133,  -1,        //16, 17
+   -1,  -1,        //18, 19
+   -1,  32,        //20, 21
+   33,  34,        //22, 23
+   35,  36,        //24, 25
+   39, 134,        //26, 27
+  135, 290,        //28. 29
+   38,  37,        //30, 31
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // ... 47
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // ... 63
 } ;
 
+//map bcm gpio_num(index) to bp gpio_num(element)
 static int pinTobcm_BP [64] =
 {
-  257,256,
-  53,52,
-  259,37,
-  38,270,
-  266,269,//9
-  268,267,
-  44,39,
-  224,225,
-  277,275,//19
-  226,40,	
-  270,45,
-  273,244,
-  245,272,
-  35,274,
+   38,  37,        //0, 1
+  243, 242,        //2, 3
+  233,  32,        //4, 5
+   33, 204,        //6, 7
+  205, 208,        //8, 9
+  207, 206,        //10, 11
+   39,  34,        //12, 13
+  132, 133,        //14, 15
+  134, 199,        //16, 17
+  234,  35,		   //18, 19
+  135, 290,        //20, 21
+  201, 235,        //22, 23
+  236, 200,        //24, 25
+   36, 198,        //26, 27
   -1,-1,
   -1,-1,//31
   -1, -1,-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // ... 47
   -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // ... 63
 } ;
 
+//map phys_num(index) to bp gpio_num(element)
 static int physToGpio_BP [64] =
 {
-  -1,          // 0
-  -1,     -1,     //1, 2
-   53,    -1,     //3, 4
-   52,    -1,     //5, 6
-   259,  224,   //7, 8
-  -1,     225,   //9, 10
-  275,   226,   //11, 12
-  274,   -1,     //13, 14
-  273,   244,   //15, 16
-  -1,     245,   //17, 18
-  268,   -1,     //19, 20
-   269,  272,   //21, 22
-  267,   266,   //23, 24
-  -1,    270,   //25, 26
-  257,   256,  //27, 28
-  37,    -1,    //29, 30
-  38,  44,   //31, 32      
-  39,   -1,      //33, 34
-  40,   277,    //35, 36
-  35,   270,     //37, 38
-  -1,   45,    //39, 40
+   -1,          // 0
+   -1,  -1,     //1, 2
+  243,  -1,     //3, 4
+  242,  -1,     //5, 6
+  233, 132,     //7, 8
+   -1, 133,     //9, 10
+  199, 234,     //11, 12
+  198,  -1,     //13, 14
+  201, 235,     //15, 16
+   -1, 236,     //17, 18
+  207,  -1,     //19, 20
+  208, 200,     //21, 22
+  206, 205,     //23, 24
+   -1, 204,     //25, 26
+   38,  37,     //27, 28
+   32,  -1,     //29, 30
+   33,  39,     //31, 32      
+   34,  -1,     //33, 34
+   35, 134,     //35, 36
+   36, 135,     //37, 38
+   -1, 290,     //39, 40
    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, //41-> 55
    -1, -1, -1, -1, -1, -1, -1, -1 // 56-> 63
 } ;
@@ -733,14 +743,15 @@ static int physToGpioR3 [64] =//head 2 arm pin and p5
 static int BP_PIN_MASK[9][32] =  //[BANK]  [INDEX]
 {
   {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PA
- {-1,-1,-1, 3,-1,  5,  6, 7,  8,-1,-1,-1,12,13,-1,-1,-1,-1,-1,-1,20,21,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PB
+  {0,1,2,3,4,5,6,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PB
   {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PC
   {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PD
-  {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PE
+  {-1,-1,-1,-1, 4, 5, 6, 7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PE
   {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PF
-  {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PG
-  {0,1,2,3,-1,5,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,20,21,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PH
-  {0,1,-1,3,-1,-1,-1,-1,-1,-1,10,11,12,13,14,-1,16,17,18,19,20,21,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PI
+  {-1,-1,-1,-1,-1,-1, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PG
+  {-1,-1,-1,-1,-1,-1,-1,-1,-1,9,10,11,12,-1,-1,-1,-1,-1,18,19,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PH
+  {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PL
+  {-1,-1,2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,},//PM
 };
 static int version=0;
 static int pwmmode=0;
@@ -749,6 +760,153 @@ static int pwmmode=0;
  *A20 Tools for Banana Pi 
  */
 
+void sunxi_gpio_unexports(void)
+{
+  int fd ;
+  int i, pin;
+
+  if (wiringPiDebug)
+	printf("%s\n", __func__);
+
+  wiringPiSetup();
+  
+  for (i = 0 ; i < 32 ; ++i) 
+  {
+    if ((i & PI_GPIO_MASK) == 0)    // On-board pin
+    {
+      if (wiringPiMode == WPI_MODE_PINS)
+       	pin = pinToGpio_BP [i] ;
+      else if (wiringPiMode == WPI_MODE_PHYS)
+      	pin = physToGpio_BP [i] ;
+      else if (wiringPiMode == WPI_MODE_GPIO)
+      	pin= pinTobcm_BP[i];//need map A20 to bcm
+      else 
+	  	return;
+
+	  if (wiringPiDebug)
+	    printf("%s, i= %d, pin = %d\n", __func__, i, pin);
+
+	  if (-1 == pin)  /*VCC or GND return directly*/
+  	  {
+  		//printf("%s, the pin:%d is invaild,please check it over!\n", __func__, pin);
+  		continue;
+  	  }
+    }
+  
+    if ((fd = fopen ("/sys/class/gpio/unexport", "w")) == NULL)
+    {
+      fprintf (stderr, "Unable to open GPIO export interface\n") ;
+      exit (1) ;
+    }
+
+	if (wiringPiDebug)
+	    printf("%s, i= %d, pin = %d\n", __func__, i, pin);
+	
+    fprintf (fd, "%d\n", pin) ;
+    fclose (fd) ;
+  }
+}
+
+void sunxi_gpio_exports(void)
+{
+  int fd ;
+  int i, l, first, pin;
+  char fName [128] ;
+  char buf [16] ;
+
+  if (wiringPiDebug)
+	printf("%s\n", __func__);
+
+  wiringPiSetup();
+
+  for(first = 0, i = 0; i < 32; i++)
+  {
+    if ((i & PI_GPIO_MASK) == 0)    // On-board pin
+    {
+      if (wiringPiMode == WPI_MODE_PINS)
+       	pin = pinToGpio_BP [i] ;
+      else if (wiringPiMode == WPI_MODE_PHYS)
+      	pin = physToGpio_BP [i] ;
+      else if (wiringPiMode == WPI_MODE_GPIO)
+      	pin= pinTobcm_BP[i];//need map A20 to bcm
+      else 
+	  	return;
+
+	  if (wiringPiDebug)
+	    printf("%s, i= %d, pin = %d\n", __func__, i, pin);
+
+	  if (-1 == pin)  /*VCC or GND return directly*/
+  	  {
+  		//printf("%s, the pin:%d is invaild,please check it over!\n", __func__, pin);
+  		continue;
+  	  }
+    }
+
+    // Try to read the direction
+    sprintf (fName, "/sys/class/gpio/gpio%d/direction", pin) ;
+    if ((fd = open (fName, O_RDONLY)) == -1)
+      continue ;
+
+    if (first == 0)
+    {
+      ++first ;
+      printf("GPIO Pins exported:\n") ;
+    }
+
+    printf("%d(BP=%d): ", i, pin) ;
+
+    if ((l = read (fd, buf, 16)) == 0)
+      sprintf(buf, "%s", "?") ;
+ 
+    buf [l] = 0 ;
+    if ((buf [strlen (buf) - 1]) == '\n')
+      buf [strlen (buf) - 1] = 0 ;
+
+    printf("direction=%-3s  ", buf) ;
+
+    close (fd) ;
+
+    // Try to Read the value
+    sprintf (fName, "/sys/class/gpio/gpio%d/value", pin) ;
+    if ((fd = open (fName, O_RDONLY)) == -1)
+    {
+      printf ("No Value file (huh?)\n") ;
+      continue ;
+    }
+
+    if ((l = read (fd, buf, 16)) == 0)
+      sprintf (buf, "%s", "?") ;
+
+    buf [l] = 0 ;
+    if ((buf [strlen (buf) - 1]) == '\n')
+      buf [strlen (buf) - 1] = 0 ;
+
+    printf("value=%s  ", buf) ;
+
+    // Read any edge trigger file
+    sprintf (fName, "/sys/class/gpio/gpio%d/edge", pin) ;
+    if ((fd = open (fName, O_RDONLY)) == -1)
+    {
+      printf ("\n") ;
+      continue ;
+    }
+
+    if ((l = read (fd, buf, 16)) == 0)
+      sprintf (buf, "%s", "?") ;
+
+    buf [l] = 0 ;
+    if ((buf [strlen (buf) - 1]) == '\n')
+      buf [strlen (buf) - 1] = 0 ;
+
+    printf("edge=%-8s\n", buf) ;
+
+    close (fd) ;
+	
+  }
+}
+
+
+#if 0
 /**
  * [readl read with an address]
  * @param  addr [address]
@@ -777,90 +935,201 @@ void writel(uint32_t val, uint32_t addr)
 
   *(gpio + mmap_seek) = val;
 }
+#endif
 
-/**
- * [sunxi_pwm_set_enable pwm for Banana Pi only for pwm1]
- * @param en [bool enable]
- */
-void sunxi_pwm_set_enable(int en)
+uint32_t sunxi_pwm_readl(uint32_t addr)
 {
-	 int val = 0;
-	 val = readl(SUNXI_PWM_CTRL_REG);
-	 if(en)
-	 {
-		val |= (SUNXI_PWM_CH1_EN | SUNXI_PWM_SCLK_CH1_GATING);
-	 } 
-	 else 
-	 {
-		val &= ~(SUNXI_PWM_CH1_EN | SUNXI_PWM_SCLK_CH1_GATING);
-	 }
-	  if (wiringPiDebug)
-		printf(">>function%s,no:%d,enable? :0x%x\n",__func__, __LINE__, val);
-	 writel(val, SUNXI_PWM_CTRL_REG);
-	 delay (1) ;
+  uint32_t val = 0;
+  uint32_t mmap_base = (addr & ~MAP_MASK);
+  uint32_t mmap_seek = ((addr - mmap_base) >> 2);
+
+  val = *(pwm + mmap_seek);
+
+  return val;
 }
 
-void sunxi_pwm_set_mode(int mode)
+void sunxi_pwm_writel(uint32_t val, uint32_t addr)
 {
-	 int val = 0;
-	 val = readl(SUNXI_PWM_CTRL_REG);
-	 mode &= 1; //cover the mode to 0 or 1
-	 if(mode)
-	 { //pulse mode
-		val |= ( SUNXI_PWM_CH1_MS_MODE|SUNXI_PWM_CH1_PUL_START);
-		pwmmode=1;
-	 }
-	 else 
-	 {  //cycle mode
-		val &= ~( SUNXI_PWM_CH1_MS_MODE);
-		pwmmode=0;
-	 }
-	 val |= ( SUNXI_PWM_CH1_ACT_STA);
-	   if (wiringPiDebug)
-			printf(">>function%s,no:%d,mode? :0x%x\n",__func__, __LINE__, val);
-	 writel(val, SUNXI_PWM_CTRL_REG);
-	 delay (1) ;
+  uint32_t mmap_base = (addr & ~MAP_MASK);
+  uint32_t mmap_seek = ((addr - mmap_base) >> 2);
+
+  *(pwm + mmap_seek) = val;
 }
 
-void sunxi_pwm_set_clk(int clk)
+uint32_t sunxi_gpio_readl(uint32_t addr, int bank)
 {
-	 int val = 0;
+  uint32_t val = 0;
+  uint32_t mmap_base = (addr & ~MAP_MASK);
+  uint32_t mmap_seek = ((addr - mmap_base) >> 2);
+
+  /* DK, for PL and PM */
+  if(bank >= 8)
+      val = *(gpio_lm+ mmap_seek);
+  else
+      val = *(gpio + mmap_seek);
+
+  return val;
+}
+
+void sunxi_gpio_writel(uint32_t val, uint32_t addr, int bank)
+{
+  uint32_t mmap_base = (addr & ~MAP_MASK);
+  uint32_t mmap_seek = ((addr - mmap_base) >> 2);
+
+  if(bank >= 8)
+      *(gpio_lm+ mmap_seek) = val;
+  else
+      *(gpio + mmap_seek) = val;
+}
+
+void sunxi_pwm_set_enable(int en, int pwm_ch)
+{
+  int val = 0;
+  uint32_t pwm_ch_addr=0;
+
+  if(pwm_ch == 1)
+  	pwm_ch_addr = SUNXI_PWM_CH1_CTRL;
+  else if(pwm_ch == 2)
+  	pwm_ch_addr = SUNXI_PWM_CH2_CTRL;
+  
+  val = sunxi_pwm_readl(pwm_ch_addr);
+  if(en)
+  {
+	val |= (SUNXI_PWM_CH_EN | SUNXI_PWM_SCLK_CH_GATING);
+  } 
+  else 
+  {
+	val &= ~(SUNXI_PWM_CH_EN | SUNXI_PWM_SCLK_CH_GATING);
+  }
+  
+  if (wiringPiDebug)
+	printf(">>function%s,no:%d,enable? :0x%x\n",__func__, __LINE__, val);
+  
+  sunxi_pwm_writel(val, pwm_ch_addr);
+  delay (1) ;
+}
+
+void sunxi_pwm_set_mode(int mode, int pwm_ch)
+{
+  int val = 0;
+  uint32_t pwm_ch_addr=0;
+
+  if(pwm_ch == 1)
+  	pwm_ch_addr = SUNXI_PWM_CH1_CTRL;
+  else if(pwm_ch == 2)
+  	pwm_ch_addr = SUNXI_PWM_CH2_CTRL;
 	 
-	// sunxi_pwm_set_enable(0);
-	 val = readl(SUNXI_PWM_CTRL_REG);
-	 //clear clk to 0
-	 val &= 0xf801f0;
-	 val |= ((clk & 0xf) << 15);  //todo check wether clk is invalid or not
-	 writel(val, SUNXI_PWM_CTRL_REG);
-	 sunxi_pwm_set_enable(1);
-	 if (wiringPiDebug)
-		printf(">>function%s,no:%d,clk? :0x%x\n",__func__, __LINE__, val);
-	delay (1) ;
+  val = sunxi_pwm_readl(pwm_ch_addr);
+  mode &= 1; //cover the mode to 0 or 1
+  if(mode)
+  { //pulse mode
+    val |= ( SUNXI_PWM_CH_MS_MODE|SUNXI_PWM_CH_PUL_START);
+    pwmmode=1;
+  }
+  else 
+  {  //cycle mode
+    val &= ~( SUNXI_PWM_CH_MS_MODE);
+    pwmmode=0;
+  }
+  
+  val |= ( SUNXI_PWM_CH_ACT_STA);
+  
+  if (wiringPiDebug)
+	printf("%s, %d, mode = 0x%x\n",__func__, __LINE__, val);
+  
+  sunxi_pwm_writel(val, pwm_ch_addr);
+
+  delay (1) ;
+	
+  val = sunxi_pwm_readl(pwm_ch_addr);//get ch1 period_cys
+  if (wiringPiDebug)
+    printf("%s after set, channel: %d, mode: %d, phyaddr:0x%x\n",__func__, pwm_ch, val, pwm_ch_addr);
+}
+
+void sunxi_pwm_set_clk(int clk, int pwm_ch)
+{
+  int val = 0;
+  uint32_t pwm_ch_addr=0;
+
+  if(pwm_ch == 1)
+  	pwm_ch_addr = SUNXI_PWM_CH1_CTRL;
+  else if(pwm_ch == 2)
+  	pwm_ch_addr = SUNXI_PWM_CH2_CTRL;
+  
+  val = sunxi_pwm_readl(pwm_ch_addr);
+
+  //clear clk to 0
+  val &= 0xfffffff0;
+  val |= ((clk & 0xf) << 0);  //todo check wether clk is invalid or not
+  sunxi_pwm_writel(val, pwm_ch_addr);
+	 
+  if (wiringPiDebug)
+	printf(">>function%s,no:%d,clk? :0x%x\n",__func__, __LINE__, val);
+	 
+  delay (1) ;
 }
 
 /**
  * ch0 and ch1 set the same,16 bit period and 16 bit act
  */
-uint32_t sunxi_pwm_get_period(void)
+uint32_t sunxi_pwm_get_period(int pwm_ch)
 {
   uint32_t period_cys = 0;
+  uint32_t pwm_ch_addr=0;
 
-  period_cys = readl(SUNXI_PWM_CH1_PERIOD);//get ch1 period_cys
+  if(pwm_ch == 1)
+  	pwm_ch_addr = SUNXI_PWM_CH1_PERIOD;
+  else if(pwm_ch == 2)
+  	pwm_ch_addr = SUNXI_PWM_CH2_PERIOD;
+
+  period_cys = sunxi_pwm_readl(pwm_ch_addr);//get ch1 period_cys
   period_cys &= 0xffff0000;//get period_cys
   period_cys = period_cys >> 16;
 
   if (wiringPiDebug)
-    printf(">>func:%s,no:%d,period/range:%d",__func__,__LINE__,period_cys);
+    printf(">>func:%s,no:%d, channel: %d period/range: %d\n",__func__,__LINE__, pwm_ch, period_cys);
+  
   delay (1);
-
   return period_cys;
 }
+
+void sunxi_pwm_set_period(int period_cys, int pwm_ch)
+{
+  uint32_t val = 0;
+  uint32_t pwm_ch_addr=0;
+
+  if(pwm_ch == 1)
+  	pwm_ch_addr = SUNXI_PWM_CH1_PERIOD;
+  else if(pwm_ch == 2)
+  	pwm_ch_addr = SUNXI_PWM_CH2_PERIOD;
+
+  if (wiringPiDebug)
+    printf("%s before set, channel: %d, period/range: %d, phyaddr:0x%x\n",__func__, pwm_ch, period_cys, pwm_ch_addr);
+
+  period_cys &= 0xffff; //set max period to 2^16
+  period_cys = period_cys << 16;
+  val = sunxi_pwm_readl(pwm_ch_addr);
+  val &=0x0000ffff;
+  val |= period_cys;
+  sunxi_pwm_writel(val, pwm_ch_addr);
+
+  delay (10) ;
+  
+  val = sunxi_pwm_readl(pwm_ch_addr);//get ch1 period_cys
+  val &= 0xffff0000;//get period_cys
+  val = val >> 16;
+
+  if (wiringPiDebug)
+    printf("%s after set, channel: %d, period/range: %d, phyaddr:0x%x\n",__func__, pwm_ch, val, pwm_ch_addr);
+  
+}
+
 
 uint32_t sunxi_pwm_get_act(void)
 {
   uint32_t period_act = 0;
 
-  period_act = readl(SUNXI_PWM_CH1_PERIOD);//get ch1 period_cys
+  period_act = sunxi_pwm_readl(SUNXI_PWM_CH1_PERIOD);//get ch1 period_cys
   period_act &= 0xffff;//get period_act
 
   if (wiringPiDebug)
@@ -870,54 +1139,112 @@ uint32_t sunxi_pwm_get_act(void)
   return period_act;
 }
 
-void sunxi_pwm_set_period(int period_cys)
-{
-  uint32_t val = 0;
-
-  //all clear to 0
-  if (wiringPiDebug)
-    printf(">>func:%s no:%d\n",__func__,__LINE__);
-
-  period_cys &= 0xffff; //set max period to 2^16
-  period_cys = period_cys << 16;
-  val = readl(SUNXI_PWM_CH1_PERIOD);
-  val &=0x0000ffff;
-  period_cys |= val;
-  writel(period_cys, SUNXI_PWM_CH1_PERIOD);
-  delay (1) ;
-}
-
-void sunxi_pwm_set_act(int act_cys)
+void sunxi_pwm_set_act(int act_cys, int pwm_ch)
 {
   uint32_t per0 = 0;
-
+  uint32_t pwm_ch_addr=0;
+  
   //keep period the same, clear act_cys to 0 first
   if (wiringPiDebug)
     printf(">>func:%s no:%d\n",__func__,__LINE__);
 
-  per0 = readl(SUNXI_PWM_CH1_PERIOD);
-  per0 &= 0xffff0000;
+  if(pwm_ch == 1)
+  	pwm_ch_addr = SUNXI_PWM_CH1_PERIOD;
+  else if(pwm_ch == 2)
+  	pwm_ch_addr = SUNXI_PWM_CH2_PERIOD;
+
   act_cys &= 0xffff;
-  act_cys |= per0;
-  writel(act_cys,SUNXI_PWM_CH1_PERIOD);
-  delay (1) ;
+  per0 = sunxi_pwm_readl(pwm_ch_addr);
+  per0 &= 0xffff0000;
+  per0 |= act_cys;
+  sunxi_pwm_writel(per0,pwm_ch_addr);
+  delay (10) ;
+
+  per0 = sunxi_pwm_readl(pwm_ch_addr);//get ch1 period_cys
+  per0 &= 0xffff;//get period_cys
+
+  if (wiringPiDebug)
+    printf("%s after set, channel: %d, act: %d, phyaddr:0x%x\n",__func__, pwm_ch, per0, pwm_ch_addr);
+  
 }
 
-int sunxi_get_gpio_mode(int pin)
+void sunxi_pwm_clear_reg(int pwm_ch)
+{
+  if(pwm_ch == 1){
+    sunxi_pwm_writel(0, SUNXI_PWM_CH1_CTRL); 
+    sunxi_pwm_writel(0, SUNXI_PWM_CH1_PERIOD); 
+  }
+  else if(pwm_ch == 2){
+    sunxi_pwm_writel(0, SUNXI_PWM_CH2_CTRL); 
+    sunxi_pwm_writel(0, SUNXI_PWM_CH2_PERIOD);
+  }
+}
+
+int sunxi_pwm_get_channel(int pin)
+{	
+  if(pin < 233 || pin > 236){
+	return wiringPiFailure (WPI_FATAL, "sunxi_pw_channel: gpio %d not support PWM mode\n", pin) ;
+  }
+
+  //channel 1
+  if(pin == 233 || pin == 234)
+	return 1;
+
+  //channel 2
+  if(pin == 235 || pin == 236)
+	return 2;
+}
+
+void sunxi_pwm_set_all(int pin)
+{
+  int pwm_ch;
+  
+  pwm_ch = sunxi_pwm_get_channel(pin); 
+
+  //channel select fail
+  if(pwm_ch == 1 || pwm_ch == 2)
+  {
+	if (wiringPiDebug)
+        printf("%s, PWM channel select %d, pin = %d\n", __func__, pwm_ch, pin);
+  }
+  else
+  {
+    return wiringPiFailure (WPI_FATAL, "%s, PWM channel if wrong, channel: %d, pin: %d\n", pwm_ch, pin) ;
+  }
+  	
+  sunxi_pwm_clear_reg(pwm_ch);
+  
+  //set default M:S to 1/2
+  sunxi_pwm_set_period(1024, pwm_ch);
+  sunxi_pwm_set_act(512, pwm_ch);
+  sunxi_pwm_set_mode(PWM_MODE_MS, pwm_ch);
+  sunxi_pwm_set_clk(PWM_CLK_DIV_64, pwm_ch);//default clk:24M/120
+  sunxi_pwm_set_enable(1, pwm_ch);
+  delayMicroseconds (200);
+}
+
+int sunxi_get_pin_mode(int pin)
 {
   uint32_t regval = 0;
   int bank = pin >> 5;
   int index = pin - (bank << 5);
   int offset = ((index - ((index >> 3) << 3)) << 2);
   uint32_t reval=0;
-  uint32_t phyaddr = SUNXI_GPIO_BASE + (bank * 36) + ((index >> 3) << 2);
+  uint32_t phyaddr=0;
+
+  /* for M2 PM and PL */
+  if(bank >= 8)
+    phyaddr = SUNXI_GPIO_LM_BASE + ((bank - 8) * 36) + ((index >> 3) << 2);
+  else
+  	phyaddr = SUNXI_GPIO_BASE + (bank * 36) + ((index >> 3) << 2);
 
   if (wiringPiDebug)
     printf("func:%s pin:%d,  bank:%d index:%d phyaddr:0x%x\n",__func__, pin , bank,index,phyaddr);
 
   if(BP_PIN_MASK[bank][index] != -1)
   {
-    regval = readl(phyaddr);
+    regval = sunxi_gpio_readl(phyaddr, bank);
+	
     if (wiringPiDebug)
       printf("read reg val: 0x%x offset:%d  return: %d\n",regval,offset,reval);
 
@@ -936,28 +1263,35 @@ int sunxi_get_gpio_mode(int pin)
   } 
 }
 
-void sunxi_set_gpio_mode(int pin,int mode)
+void sunxi_set_pin_mode(int pin,int mode)
 {
   uint32_t regval = 0;
   int bank = pin >> 5;
   int index = pin - (bank << 5);
   int offset = ((index - ((index >> 3) << 3)) << 2);
-  uint32_t phyaddr = SUNXI_GPIO_BASE + (bank * 36) + ((index >> 3) << 2);
+  uint32_t phyaddr=0;
+
+  /* for M2 PM and PL */
+  if(bank >= 8)
+    phyaddr = SUNXI_GPIO_LM_BASE + ((bank - 8) * 36) + ((index >> 3) << 2);
+  else
+    phyaddr = SUNXI_GPIO_BASE + (bank * 36) + ((index >> 3) << 2);
 
   if (wiringPiDebug)
     printf("func:%s pin:%d, MODE:%d bank:%d index:%d phyaddr:0x%x\n",__func__, pin , mode,bank,index,phyaddr);
 
   if(BP_PIN_MASK[bank][index] != -1)
   {
-    regval = readl(phyaddr);
+    regval = sunxi_gpio_readl(phyaddr, bank);
+	
     if (wiringPiDebug)
       printf("read reg val: 0x%x offset:%d\n",regval,offset);
 
     if(INPUT == mode)
     {
       regval &= ~(7 << offset);
-      writel(regval, phyaddr);
-      regval = readl(phyaddr);
+      sunxi_gpio_writel(regval, phyaddr, bank);
+      regval = sunxi_gpio_readl(phyaddr, bank);
 
       if (wiringPiDebug)
         printf("Input mode set over reg val: 0x%x\n",regval);
@@ -969,36 +1303,56 @@ void sunxi_set_gpio_mode(int pin,int mode)
       if (wiringPiDebug)
         printf("Out mode ready set val: 0x%x\n",regval);
 
-      writel(regval, phyaddr);
-      regval = readl(phyaddr);
+      sunxi_gpio_writel(regval, phyaddr, bank);
+      regval = sunxi_gpio_readl(phyaddr, bank);
+	  
       if (wiringPiDebug)
         printf("Out mode set over reg val: 0x%x\n",regval);
     } 
     else if(PWM_OUTPUT == mode)
     {
-      // set pin PWMx to pwm mode
+      //set pin PWMx to pwm mode
       regval &= ~(7 << offset);
-      regval |=  (0x2 << offset);
+      regval |=  (0x4 << offset);
+	  
       if (wiringPiDebug)
         printf(">>>>>line:%d PWM mode ready to set val: 0x%x\n",__LINE__,regval);
 
-      writel(regval, phyaddr);
+      sunxi_gpio_writel(regval, phyaddr, bank);
       delayMicroseconds (200);
-      regval = readl(phyaddr);
+      regval = sunxi_gpio_readl(phyaddr, bank);
+	  
       if (wiringPiDebug)
-        printf("<<<<<PWM mode set over reg val: 0x%x\n",regval);
+        printf("<<<<<PWM mode set over reg val: 0x%x\n",regval); 
 
-      //clear all reg
-      writel(0,SUNXI_PWM_CTRL_REG); 
-      writel(0,SUNXI_PWM_CH0_PERIOD); 
-      writel(0,SUNXI_PWM_CH1_PERIOD); 
+	  //register configure
+	  sunxi_pwm_set_all(pin);
+    }
+	else if(I2C_PIN == mode)
+    {
+      //set pin to i2c mode
+      regval &= ~(7 << offset);
+      regval |=  (0x2 << offset);
 
-      //set default M:S to 1/2
-      sunxi_pwm_set_period(1024);
-      sunxi_pwm_set_act(512);
-      pwmSetMode(PWM_MODE_MS);
-      sunxi_pwm_set_clk(PWM_CLK_DIV_120);//default clk:24M/120
+      sunxi_gpio_writel(regval, phyaddr, bank);
       delayMicroseconds (200);
+      regval = sunxi_gpio_readl(phyaddr, bank);
+	  
+      if (wiringPiDebug)
+        printf("<<<<<PWM mode set over reg val: 0x%x\n",regval); 
+    }
+	else if(SPI_PIN == mode)
+    {
+      //set pin to spi mode
+      regval &= ~(7 << offset);
+      regval |=  (0x2 << offset);
+
+      sunxi_gpio_writel(regval, phyaddr, bank);
+      delayMicroseconds (200);
+      regval = sunxi_gpio_readl(phyaddr, bank);
+	  
+      if (wiringPiDebug)
+        printf("<<<<<PWM mode set over reg val: 0x%x\n",regval); 
     }
   }
   else 
@@ -1014,30 +1368,39 @@ void sunxi_digitalWrite(int pin, int value)
   uint32_t regval = 0;
   int bank = pin >> 5;
   int index = pin - (bank << 5);
-  uint32_t phyaddr = SUNXI_GPIO_BASE + (bank * 36) + 0x10; // +0x10 -> data reg
+  uint32_t phyaddr=0;
+
+  /* for M2 PM and PL */
+  if(bank >= 8)
+    phyaddr = SUNXI_GPIO_LM_BASE + ((bank - 8) * 36) + 0x10;
+  else
+     phyaddr = SUNXI_GPIO_BASE + (bank * 36) + 0x10;
 
   if (wiringPiDebug)
     printf("func:%s pin:%d, value:%d bank:%d index:%d phyaddr:0x%x\n",__func__, pin , value,bank,index,phyaddr);
 
   if(BP_PIN_MASK[bank][index] != -1)
   {
-    regval = readl(phyaddr);
+    regval = sunxi_gpio_readl(phyaddr, bank);
+	
     if (wiringPiDebug)
       printf("befor write reg val: 0x%x,index:%d\n",regval,index);
 
     if(0 == value)
     {
       regval &= ~(1 << index);
-      writel(regval, phyaddr);
-      regval = readl(phyaddr);
+      sunxi_gpio_writel(regval, phyaddr, bank);
+      regval = sunxi_gpio_readl(phyaddr, bank);
+	  
       if (wiringPiDebug)
         printf("LOW val set over reg val: 0x%x\n",regval);
     }
     else
     {
       regval |= (1 << index);
-      writel(regval, phyaddr);
-      regval = readl(phyaddr);
+      sunxi_gpio_writel(regval, phyaddr, bank);
+      regval = sunxi_gpio_readl(phyaddr, bank);
+	  
       if (wiringPiDebug)
         printf("HIGH val set over reg val: 0x%x\n",regval);
     }
@@ -1055,17 +1418,26 @@ int sunxi_digitalRead(int pin)
   uint32_t regval = 0;
   int bank = pin >> 5;
   int index = pin - (bank << 5);
-  uint32_t phyaddr = SUNXI_GPIO_BASE + (bank * 36) + 0x10; // +0x10 -> data reg
+  uint32_t phyaddr=0;
+
+  /* for M2 PM and PL */
+  if(bank >= 8)
+    phyaddr = SUNXI_GPIO_LM_BASE + ((bank - 8) * 36) + 0x10;
+  else
+ 	phyaddr = SUNXI_GPIO_BASE + (bank * 36) + 0x10;
 
   if (wiringPiDebug)
     printf("func:%s pin:%d,bank:%d index:%d phyaddr:0x%x\n",__func__, pin,bank,index,phyaddr); 
+  
   if(BP_PIN_MASK[bank][index] != -1)
   {
-    regval = readl(phyaddr);
+    regval = sunxi_gpio_readl(phyaddr, bank);
     regval = regval >> index;
     regval &= 1;
+	
     if (wiringPiDebug)
       printf("***** read reg val: 0x%x,bank:%d,index:%d,line:%d\n",regval,bank,index,__LINE__);
+	
     return regval;
   }
   else
@@ -1077,34 +1449,49 @@ int sunxi_digitalRead(int pin)
 
 void sunxi_pullUpDnControl (int pin, int pud)
 {
-	 uint32_t regval = 0;
-	 int bank = pin >> 5;
-	 int index = pin - (bank << 5);
-	 int sub = index >> 4;
-	 int sub_index = index - 16*sub;
-	 uint32_t phyaddr = SUNXI_GPIO_BASE + (bank * 36) + 0x1c + sub*4; // +0x10 -> pullUpDn reg
-	   if (wiringPiDebug)
-			printf("func:%s pin:%d,bank:%d index:%d sub:%d phyaddr:0x%x\n",__func__, pin,bank,index,sub,phyaddr); 
-	 if(BP_PIN_MASK[bank][index] != -1)
-	 {  //PI13~PI21 need check again
-			regval = readl(phyaddr);
-			if (wiringPiDebug)
-				printf("pullUpDn reg:0x%x, pud:0x%x sub_index:%d\n", regval, pud, sub_index);
-			regval &= ~(3 << (sub_index << 1));
-			regval |= (pud << (sub_index << 1));
-			if (wiringPiDebug)
-				printf("pullUpDn val ready to set:0x%x\n", regval);
-			writel(regval, phyaddr);
-			regval = readl(phyaddr);
-			if (wiringPiDebug)
-				printf("pullUpDn reg after set:0x%x  addr:0x%x\n", regval, phyaddr);
-	 }
-	 else 
-	 {
-		printf("pin number error\n");
-	 } 
-	 delay (1) ;	
-	return ;
+  uint32_t regval = 0;
+  int bank = pin >> 5;
+  int index = pin - (bank << 5);
+  int sub = index >> 4;
+  int sub_index = index - 16*sub;
+  uint32_t phyaddr=0;
+
+  /* for M2 PM and PL */
+  if(bank >= 8)
+    phyaddr = SUNXI_GPIO_LM_BASE + ((bank - 8) * 36) + 0x1c + sub*4;
+  else
+ 	phyaddr = SUNXI_GPIO_BASE + (bank * 36) + 0x1c + sub*4;
+
+  if (wiringPiDebug)
+	printf("func:%s pin:%d,bank:%d index:%d sub:%d phyaddr:0x%x\n",__func__, pin,bank,index,sub,phyaddr); 
+  
+  if(BP_PIN_MASK[bank][index] != -1)
+  {  //PI13~PI21 need check again
+    regval = sunxi_gpio_readl(phyaddr, bank);
+	
+	if (wiringPiDebug)
+	  printf("pullUpDn reg:0x%x, pud:0x%x sub_index:%d\n", regval, pud, sub_index);
+	
+	regval &= ~(3 << (sub_index << 1));
+	regval |= (pud << (sub_index << 1));
+	
+	if (wiringPiDebug)
+	  printf("pullUpDn val ready to set:0x%x\n", regval);
+	
+	sunxi_gpio_writel(regval, phyaddr, bank);
+	regval = sunxi_gpio_readl(phyaddr, bank);
+	
+	if (wiringPiDebug)
+	  printf("pullUpDn reg after set:0x%x  addr:0x%x\n", regval, phyaddr);
+  }
+  else 
+  {
+    printf("pin number error\n");
+  } 
+  
+  delay (1) ;	
+  
+  return ;
 }
 
 /*
@@ -1183,7 +1570,7 @@ static void piBoardRevOops (const char *why)
   exit (EXIT_FAILURE) ;
 }
 
-int isA20(void)
+int isA31s(void)
 {
   FILE *cpuFd ;
   char line [120] ;
@@ -1207,7 +1594,7 @@ int isA20(void)
   if (wiringPiDebug)
     printf ("piboardRev: Hardware string: %s\n", line) ;
 	
-	if (strstr(line,"sun7i") != NULL)
+	if (strstr(line,"sun6i") != NULL)
 	{
 		if (wiringPiDebug)
 		printf ("Hardware:%s\n",line) ;
@@ -1228,7 +1615,7 @@ int piBoardRev (void)
   char *c ;
   static int  boardRev = -1 ;
 
-  if(isA20())
+  if(isA31s())
   {
 	version = BPVER;
 		if (wiringPiDebug)
@@ -1429,7 +1816,7 @@ void piBoardId (int *model, int *rev, int *mem, int *maker, int *overVolted)
     else if (strcmp (c, "0007") == 0) { *model = PI_MODEL_A  ; *rev = PI_VERSION_2   ; *mem = 256 ; *maker = PI_MAKER_EGOMAN ; }
     else if (strcmp (c, "0008") == 0) { *model = PI_MODEL_A  ; *rev = PI_VERSION_2   ; *mem = 256 ; *maker = PI_MAKER_SONY ; ; }
     else if (strcmp (c, "0009") == 0) { *model = PI_MODEL_B  ; *rev = PI_VERSION_2   ; *mem = 256 ; *maker = PI_MAKER_QISDA  ; }
-    else if (strcmp (c, "000d") == 0) { *model = PI_MODEL_B  ; *rev = PI_VERSION_2   ; *mem = 512 ; *maker = PI_MAKER_EGOMAN ; }
+    else if (strcmp (c, "000d") == 0) { *model = PI_MODEL_BM ; *rev = PI_VERSION_1_2 ; *mem = 1024; *maker = PI_MAKER_BPI    ; }
     else if (strcmp (c, "000e") == 0) { *model = PI_MODEL_B  ; *rev = PI_VERSION_2   ; *mem = 512 ; *maker = PI_MAKER_SONY   ; }
     else if (strcmp (c, "000f") == 0) { *model = PI_MODEL_B  ; *rev = PI_VERSION_2   ; *mem = 512 ; *maker = PI_MAKER_EGOMAN ; }
     else if (strcmp (c, "0010") == 0) { *model = PI_MODEL_BP ; *rev = PI_VERSION_1_2 ; *mem = 512 ; *maker = PI_MAKER_SONY   ; }
@@ -1437,7 +1824,7 @@ void piBoardId (int *model, int *rev, int *mem, int *maker, int *overVolted)
     else if (strcmp (c, "0012") == 0) { *model = PI_MODEL_AP ; *rev = PI_VERSION_1_2 ; *mem = 256 ; *maker = PI_MAKER_SONY   ; }
     else if (strcmp (c, "0013") == 0) { *model = PI_MODEL_BP ; *rev = PI_VERSION_1_2 ; *mem = 512 ; *maker = PI_MAKER_MBEST  ; }
     else if (strcmp (c, "0014") == 0) { *model = PI_MODEL_CM ; *rev = PI_VERSION_1_2 ; *mem = 512 ; *maker = PI_MAKER_SONY   ; }
-    else if (strcmp (c, "0000") == 0) { *model = PI_MODEL_RB;  *rev = PI_VERSION_1_2;  *mem = 1024;  *maker = PI_MAKER_ROBET;}
+    else if (strcmp (c, "0000") == 0) { *model = PI_MODEL_BM;  *rev = PI_VERSION_1_2;  *mem = 1024;  *maker = PI_MAKER_BPI;}
 	else                              { *model = 0           ; *rev = 0              ; *mem =   0 ; *maker = 0 ;               }
   }
 }
@@ -1526,7 +1913,7 @@ int getAlt (int pin)
 			printf("[%s:L%d] the pin:%d is invaild,please check it over!\n", __func__,  __LINE__, pin);
 			return -1;
 		}
-    alt=sunxi_get_gpio_mode(pin);
+    alt=sunxi_get_pin_mode(pin);
 
     return alt ;
   }
@@ -1557,11 +1944,13 @@ int getAlt (int pin)
 
 void pwmSetMode (int mode)
 {
+/*
     if(version == BPVER)
 	{
         sunxi_pwm_set_mode(mode);
 		return;
 	}
+	*/
   if ((wiringPiMode == WPI_MODE_PINS) || (wiringPiMode == WPI_MODE_PHYS) || (wiringPiMode == WPI_MODE_GPIO))
   {
     if (mode == PWM_MODE_MS)
@@ -1581,11 +1970,14 @@ void pwmSetMode (int mode)
 
 void pwmSetRange (unsigned int range)
 {
+/*
   if(version == BPVER)
   {
     sunxi_pwm_set_period(range);
 	return;
   }
+  */
+  
   if ((wiringPiMode == WPI_MODE_PINS) || (wiringPiMode == WPI_MODE_PHYS) || (wiringPiMode == WPI_MODE_GPIO))
   {
     *(pwm + PWM0_RANGE) = range ; delayMicroseconds (10) ;
@@ -1611,12 +2003,14 @@ void pwmSetClock (int divisor)
   {
     if (wiringPiDebug)
       printf ("Setting to: %d. Current: 0x%08X\n", divisor, *(clk + PWMCLK_DIV)) ;
+/*
    if(version == BPVER)
    {
       sunxi_pwm_set_clk(divisor);
       sunxi_pwm_set_enable(1);
 	  return;
     }
+*/
   divisor &= 4095 ;
     pwm_control = *(pwm + PWM_CONTROL) ;		// preserve PWM_CONTROL
 
@@ -1848,23 +2242,23 @@ if ((pin & PI_GPIO_MASK) == 0)    // On-board pin
      softToneStop (origPin) ;
 
       if (mode == INPUT)
-     {
-       sunxi_set_gpio_mode(pin,INPUT);
-       wiringPinMode = INPUT;
+      {
+        sunxi_set_pin_mode(pin,INPUT);
+        wiringPinMode = INPUT;
         return ;
       }
-     else if (mode == OUTPUT)
-     {
-        sunxi_set_gpio_mode(pin, OUTPUT); //gootoomoon_set_mode
-       wiringPinMode = OUTPUT;
-      return ;
+      else if (mode == OUTPUT)
+      {
+        sunxi_set_pin_mode(pin, OUTPUT);
+        wiringPinMode = OUTPUT;
+        return ;
       }
       else if (mode == PWM_OUTPUT)
       {
-          if(pin != 259)
+        if(pin < 233 || pin > 236)
            {
             printf("the pin you choose is not surport hardware PWM\n");
-             printf("you can select PI3 for PWM pin\n");
+          printf("you can select PH9-PH12 for PWM pin\n");
             printf("or you can use it in softPwm mode\n");
               return ;
            }
@@ -1872,10 +2266,21 @@ if ((pin & PI_GPIO_MASK) == 0)    // On-board pin
             {
               printf("you choose the hardware PWM:%d\n", 1);
             }
-           sunxi_set_gpio_mode(pin,PWM_OUTPUT);
-           wiringPinMode = PWM_OUTPUT;
-          return ;
-     }
+        sunxi_set_pin_mode(pin,PWM_OUTPUT);
+        wiringPinMode = PWM_OUTPUT;
+		  
+        return ;
+      }
+	  else if (mode == I2C_PIN)
+	  {
+	    sunxi_set_pin_mode(pin, I2C_PIN);
+		wiringPinMode = I2C_PIN;
+	  }
+	  else if (mode == SPI_PIN)
+	  {
+	    sunxi_set_pin_mode(pin, SPI_PIN);
+		wiringPinMode = SPI_PIN;
+	  }
       else if (mode == PULLUP)
       {
        pullUpDnControl (origPin, 1);
@@ -2060,12 +2465,12 @@ int digitalRead (int pin)
       {
         if(pin==0)
         {
-          //printf("%d %s,%d invalid pin,please check it over.\n",pin,__func__, __LINE__);
+          printf("%d %s,%d invalid pin,please check it over.\n",pin,__func__, __LINE__);
           return 0;
         }
         if(syspin[pin]==-1)
         {
-          //printf("%d %s,%d invalid pin,please check it over.\n",pin,__func__, __LINE__);
+          printf("%d %s,%d invalid pin,please check it over.\n",pin,__func__, __LINE__);
           return 0;
         }
         if (sysFds [pin] == -1)
@@ -2247,15 +2652,8 @@ void pwmWrite (int pin, int value)
   if(version == BPVER)
   {	
     uint32_t a_val = 0;
-
-    if(pwmmode==1)//sycle
-    {
-      sunxi_pwm_set_mode(1);
-    }
-    else
-    {
-      //sunxi_pwm_set_mode(0);
-    }
+	int pwm_ch = 0;
+	
     if (pin < MAX_PIN_NUM)  // On-Board Pin needto fix me Jim
     {
       if (wiringPiMode == WPI_MODE_PINS)
@@ -2267,29 +2665,54 @@ void pwmWrite (int pin, int value)
     else
       return ;
 
-    if(-1 == pin){
-				printf("[%s:L%d] the pin:%d is invaild,please check it over!\n", __func__,  __LINE__, pin);
-      return ;
-    }
-    if(pin != 259){
-      printf("please use soft pwmmode or choose PWM pin\n");
-      return ;
-    }
-    a_val = sunxi_pwm_get_period();
-    if (wiringPiDebug)
-      printf("==> no:%d period now is :%d,act_val to be set:%d\n",__LINE__,a_val, value);
-    if(value > a_val){
-      printf("val pwmWrite 0 <= X <= 1024\n");
-      printf("Or you can set new range by yourself by pwmSetRange(range\n");
-      return;
-    }
-    //if value changed chang it
-    sunxi_pwm_set_enable(0);
-    sunxi_pwm_set_act(value);
-    sunxi_pwm_set_enable(1);
-    } else {
-      printf ("not on board :%s,%d\n", __func__, __LINE__) ;
-      if ((node = wiringPiFindNode (pin)) != NULL){
+      if(-1 == pin){
+	    printf("[%s:L%d] the pin:%d is invaild,please check it over!\n", __func__,  __LINE__, pin);
+        return ;
+      }
+	
+      if(pin < 233 || pin > 236){
+        printf("the pin you choose is not surport hardware PWM\n");
+        printf("you can select PH9-PH12 for PWM pin\n");
+        printf("or you can use it in softPwm mode\n");
+        return ;
+      }
+
+#if 0
+  	  pwm_ch = sunxi_pwm_get_channel(pin);
+  	
+      if(pwmmode==1)//sycle
+      {
+        sunxi_pwm_set_mode(PWM_MODE_BAL, pwm_ch);
+      }
+      else
+      {
+        sunxi_pwm_set_mode(PWM_MODE_MS, pwm_ch);
+      }
+  	
+      a_val = sunxi_pwm_get_period(pwm_ch);
+	
+      if (wiringPiDebug)
+        printf("==> no:%d period now is :%d,act_val to be set:%d\n",__LINE__,a_val, value);
+  	
+      if(value > a_val){
+        printf("val pwmWrite 0 <= X <= 1024\n");
+        printf("Or you can set new range by yourself by pwmSetRange(range\n");
+        return;
+      }
+  	
+      //if value changed chang it
+      sunxi_pwm_set_enable(0, pwm_ch);
+      sunxi_pwm_set_act(value, pwm_ch);
+      sunxi_pwm_set_enable(1, pwm_ch);
+#else
+	  sunxi_pwm_set_all(pin);
+#endif
+    } 
+	else 
+	{
+	  printf("not on board :%s,%d\n", __func__, __LINE__) ;
+      if ((node = wiringPiFindNode (pin)) != NULL)
+	  {
         if (wiringPiDebug)
           printf ("Jim find node%s,%d\n", __func__, __LINE__) ;
         node->digitalWrite (node, pin, value) ;
@@ -2824,14 +3247,13 @@ int wiringPiSetup (void)
   if(boardRev == BPVER)
   {
     // GPIO:
-    gpio = (uint32_t *)mmap(0, BLOCK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GPIO_BASE_BP);
-    //if (wiringPiDebug)
-   // printf("++++ gpio:0x%x\n", gpio);
-    //gpio += 0x21b; //for PD0 cubieboard
-    //if (wiringPiDebug)
-    // printf("++++ gpio PDx:0x%x\n", gpio);
-    if ((int32_t)gpio == -1)
-      return wiringPiFailure ("wiringPiSetup: mmap (GPIO) failed: %s\n", strerror (errno)) ;
+    /* for PM and PL */
+    if(boardRev == BPVER)
+	  gpio_lm = (uint32_t *)mmap(0, BLOCK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GPIO_BASE_LM_BP);
+
+	gpio = (uint32_t *)mmap(0, BLOCK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GPIO_BASE_BP);
+	if (((int32_t)gpio == -1) || ((int32_t)gpio == -1 ))
+	  return wiringPiFailure (WPI_ALMOST,"wiringPiSetup: mmap (GPIO) failed: %s\n", strerror (errno)) ;
 
     // PWM
     pwm = (uint32_t *)mmap(0, BLOCK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, GPIO_PWM_BP) ;
@@ -2908,6 +3330,9 @@ int wiringPiSetup (void)
     wiringPiMode = WPI_MODE_GPIO ;
   else
     wiringPiMode = WPI_MODE_PINS ;
+
+  if (wiringPiDebug)
+    printf ("%s: wiringPiMode = %d\n", __func__, wiringPiMode) ;
 
   return 0 ;
 }

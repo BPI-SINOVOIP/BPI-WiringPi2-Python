@@ -45,6 +45,8 @@
 #define	SOFT_PWM_OUTPUT		 4
 #define	SOFT_TONE_OUTPUT	 5
 #define	PWM_TONE_OUTPUT		 6
+#define I2C_PIN				 7
+#define SPI_PIN				 8
 
 #define	LOW			 0
 #define	HIGH			 1
@@ -74,14 +76,14 @@
 // Pi model types and version numbers
 //	Intended for the GPIO program Use at your own risk.
 
-#define	PI_MODEL_UNKNOWN	0
-#define	PI_MODEL_A		1
-#define	PI_MODEL_B		2
-#define	PI_MODEL_BP		3
-#define	PI_MODEL_CM		4
-#define	PI_MODEL_AP		5
-#define	PI_MODEL_2		6
-#define PI_MODEL_RB             7
+#define	PI_MODEL_UNKNOWN	 0
+#define	PI_MODEL_A		     1
+#define	PI_MODEL_B		     2
+#define	PI_MODEL_BP		     3
+#define	PI_MODEL_CM		     4
+#define	PI_MODEL_AP		     5
+#define	PI_MODEL_2		     6
+#define PI_MODEL_BM		     7
 
 #define	PI_VERSION_UNKNOWN	0
 #define	PI_VERSION_1		1
@@ -89,17 +91,17 @@
 #define	PI_VERSION_1_2		3
 #define	PI_VERSION_2		4
 
-#define	PI_MAKER_UNKNOWN	0
-#define	PI_MAKER_EGOMAN		1
-#define	PI_MAKER_SONY		2
-#define	PI_MAKER_QISDA		3
-#define	PI_MAKER_MBEST		4
-#define PI_MAKER_ROBET          5
+#define	PI_MAKER_UNKNOWN	 0
+#define	PI_MAKER_EGOMAN		 1
+#define	PI_MAKER_SONY		 2
+#define	PI_MAKER_QISDA		 3
+#define	PI_MAKER_MBEST		 4
+#define	PI_MAKER_BPI		 5
 
 #define BPVER 3 
-extern const char *piModelNames    [7] ;
+extern const char *piModelNames    [8] ;
 extern const char *piRevisionNames [5] ;
-extern const char *piMakerNames    [5] ;
+extern const char *piMakerNames    [6] ;
 
 
 //	Intended for the GPIO program Use at your own risk.
